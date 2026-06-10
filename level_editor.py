@@ -8,19 +8,19 @@ bl_info = {
     "blender": (3, 3, 1),
     "location": "",
     "description": "レベルエディタ",
-    "warning": "", 
+    "warning": "",
     "wiki_url": "",
-    "tracker_url": "", 
+    "tracker_url": "",
     "category": "Object"
 }
 
-# Add-on 有効化時コールバック
+#アドオン有効化時コールバック
 def register():
-    print("レベルエディタが有効化されました。")
+    print("レベルエディタが有効化されました。 ")
 
-# Add-On 無効化時コールバック
+#アドオン無効化時コールバック
 def unregister():
-    print("レベルエディタが無効化されました。")
+    print("レベルエディタが無効化されました。 ")
 
 # テスト実行用コード
 if __name__ == "__main__":
