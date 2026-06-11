@@ -379,6 +379,48 @@ def import_player_model(location):
     bpy.ops.object.select_all(action='DESELECT')
     return player_root
 
+# 敵モデルのインポート処理
+def import_enemy_model(location, scale_val=(1.0, 1.0, 1.0), rotation_val=(0.0, 0.0, 0.0)):
+    obj_path = "C:/Users/k024g/Desktop/GE3&CG3/project/Resources/Player/player.obj"
+    if not os.path.exists(obj_path):
+        return None
+    
+    # 選択解除
+    bpy.ops.object.select_all(action='DESELECT')
+    
+    # インポート
+    try:
+        bpy.ops.wm.obj_import(filepath=obj_path)
+    except AttributeError:
+        bpy.ops.import_scene.obj(filepath=obj_path)
+        
+    # インポートされたオブジェクトの取得
+    imported_objs = [o for o in bpy.context.selected_objects if o.type == 'MESH']
+    if not imported_objs:
+        return None
+        
+    # 複数オブジェクトをバインドするための親オブジェクトを生成
+    enemy_root = bpy.data.objects.new("Game_Enemy", None)
+    bpy.context.scene.collection.objects.link(enemy_root)
+    
+    # ワールド座標を崩さず結ぶため、一度原点で親子関係を作成
+    enemy_root.location = (0.0, 0.0, 0.0)
+    enemy_root.scale = (1.0, 1.0, 1.0)
+    
+    for child in imported_objs:
+        child.parent = enemy_root
+        child.name = "Game_Enemy_Mesh"
+        
+    # 親子関係が結ばれた後に、親を目標の位置・スケール・回転に設定
+    enemy_root.location = location
+    # 敵の等倍表示のため、C++スケール(scale_val)にBlenderサイズ比0.5を掛けて 5.0 倍
+    enemy_root.scale = (scale_val[0] * 5.0, scale_val[2] * 5.0, scale_val[1] * 5.0)
+    enemy_root.rotation_euler = (math.radians(rotation_val[0]), math.radians(rotation_val[2]), math.radians(rotation_val[1]))
+    
+    # 選択解除
+    bpy.ops.object.select_all(action='DESELECT')
+    return enemy_root
+
 # オペレータ C++シーンレイアウト読込
 class MYADDON_OT_import_layout(bpy.types.Operator):
     bl_idname = "myaddon.myaddon_ot_import_layout"
@@ -464,6 +506,10 @@ class MYADDON_OT_import_layout(bpy.types.Operator):
                         
                     elif type_name == "PLAYER":
                         import_player_model(loc)
+                        imported_count += 1
+                        
+                    elif type_name == "ENEMY":
+                        import_enemy_model(loc, scale, (rx, ry, rz))
                         imported_count += 1
                         
             # 作成後の選択状態をクリア
