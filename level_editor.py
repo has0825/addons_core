@@ -333,6 +333,52 @@ def get_or_create_import_material(name, color):
             principled.inputs['Base Color'].default_value = color
     return mat
 
+# プレイヤーモデルのインポート処理
+def import_player_model(location):
+    # すでにプレイヤーオブジェクトが存在する場合は削除してからインポート
+    old_player = bpy.data.objects.get("Game_Player")
+    if old_player:
+        bpy.data.objects.remove(old_player, do_unlink=True)
+        
+    obj_path = "C:/Users/k024g/Desktop/GE3&CG3/project/Resources/Player2/Player.obj"
+    if not os.path.exists(obj_path):
+        return None
+    
+    # 選択解除
+    bpy.ops.object.select_all(action='DESELECT')
+    
+    # インポート
+    try:
+        bpy.ops.wm.obj_import(filepath=obj_path)
+    except AttributeError:
+        bpy.ops.import_scene.obj(filepath=obj_path)
+        
+    # インポートされたオブジェクトの取得
+    imported_objs = [o for o in bpy.context.selected_objects if o.type == 'MESH']
+    if not imported_objs:
+        return None
+        
+    # 複数オブジェクトをバインドするための親オブジェクトを生成
+    player_root = bpy.data.objects.new("Game_Player", None)
+    bpy.context.scene.collection.objects.link(player_root)
+    
+    # ワールド座標を崩さず結ぶため、一度原点で親子関係を作成
+    player_root.location = (0.0, 0.0, 0.0)
+    player_root.scale = (1.0, 1.0, 1.0)
+    
+    for child in imported_objs:
+        child.parent = player_root
+        child.name = "Game_Player_Mesh"
+        
+    # 親子関係が結ばれた後に、親を目標の位置・スケールに設定
+    player_root.location = location
+    player_root.scale = (5.0, 5.0, 5.0)
+    player_root.rotation_euler = (0.0, 0.0, 0.0)
+    
+    # 選択解除
+    bpy.ops.object.select_all(action='DESELECT')
+    return player_root
+
 # オペレータ C++シーンレイアウト読込
 class MYADDON_OT_import_layout(bpy.types.Operator):
     bl_idname = "myaddon.myaddon_ot_import_layout"
@@ -416,6 +462,10 @@ class MYADDON_OT_import_layout(bpy.types.Operator):
                         obj.data.materials.append(floor_mat)
                         imported_count += 1
                         
+                    elif type_name == "PLAYER":
+                        import_player_model(loc)
+                        imported_count += 1
+                        
             # 作成後の選択状態をクリア
             bpy.ops.object.select_all(action='DESELECT')
             
@@ -424,6 +474,60 @@ class MYADDON_OT_import_layout(bpy.types.Operator):
             return {'CANCELLED'}
 
         self.report({'INFO'}, f"シーンレイアウトを読み込みました。配置数: {imported_count}")
+        return {'FINISHED'}
+
+# リアルタイム同期用のグローバル状態と関数群
+sync_timer_active = False
+
+def sync_timer_callback():
+    global sync_timer_active
+    if not sync_timer_active:
+        return None # タイマーを停止
+        
+    path = "C:/Users/k024g/Desktop/GE3&CG3/project/Resources/player_actual_pos.txt"
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+                if content:
+                    tokens = content.split(',')
+                    if len(tokens) >= 3:
+                        x = float(tokens[0])
+                        y = float(tokens[1])
+                        z = float(tokens[2])
+                        
+                        # C++ (x, y, z) -> Blender (x, z, y)
+                        loc = (x, z, y)
+                        
+                        # Game_Player オブジェクトを検索
+                        player_obj = bpy.data.objects.get("Game_Player")
+                        if player_obj:
+                            player_obj.location = loc
+                        else:
+                            # 存在しなければ新規インポート
+                            import_player_model(loc)
+        except Exception:
+            pass
+            
+    return 0.03 # 30ms後に再読み込み
+
+class MYADDON_OT_realtime_sync(bpy.types.Operator):
+    bl_idname = "myaddon.myaddon_ot_realtime_sync"
+    bl_label = "C++実行位置とリアルタイム同期"
+    bl_description = "C++ゲームのプレイ中に、自機の位置をBlender上にリアルタイム同期します"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        global sync_timer_active
+        
+        if sync_timer_active:
+            sync_timer_active = False
+            self.report({'INFO'}, "リアルタイム同期を停止しました。")
+        else:
+            sync_timer_active = True
+            bpy.app.timers.register(sync_timer_callback)
+            self.report({'INFO'}, "リアルタイム同期を開始しました。C++ゲームを起動して操作してください。")
+            
         return {'FINISHED'}
 
 #オペレータ シーン出力
@@ -522,6 +626,8 @@ class TOPBAR_MT_my_menu(bpy.types.Menu):
         self.layout.separator()
         self.layout.operator(MYADDON_OT_import_layout.bl_idname,
             text=MYADDON_OT_import_layout.bl_label)
+        self.layout.operator(MYADDON_OT_realtime_sync.bl_idname,
+            text=MYADDON_OT_realtime_sync.bl_label)
         self.layout.separator()
         self.layout.operator(MYADDON_OT_generate_tunnel.bl_idname,
             text=MYADDON_OT_generate_tunnel.bl_label)
@@ -542,6 +648,7 @@ classes = (
     MYADDON_OT_create_ico_sphere,
     MYADDON_OT_export_scene,
     MYADDON_OT_import_layout,
+    MYADDON_OT_realtime_sync,
     MYADDON_OT_generate_tunnel,
     MYADDON_OT_check_collision,
     MYADDON_OT_clear_warning,
