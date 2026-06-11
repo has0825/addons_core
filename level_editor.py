@@ -1,13 +1,13 @@
 import math
 import sys
 import os
-from mathutils import Vector
 
-# bpy (Blender Python API) はBlender内でのみ動作するため、
+# bpy (Blender Python API) および mathutils はBlender内でのみ動作するため、
 # 通常のPython環境で直接実行された場合はメッセージを出して安全に終了させます。
 try:
     import bpy
     import bpy_extras
+    from mathutils import Vector
 except ImportError:
     print("-" * 60)
     print("【お知らせ】")
@@ -321,6 +321,111 @@ class MYADDON_OT_clear_warning(bpy.types.Operator):
         self.report({'INFO'}, f"警告色をクリアしました。復元オブジェクト数: {restored_count}")
         return {'FINISHED'}
 
+# C++シーンレイアウトインポート用のマテリアル取得・作成関数
+def get_or_create_import_material(name, color):
+    mat = bpy.data.materials.get(name)
+    if not mat:
+        mat = bpy.data.materials.new(name)
+        mat.use_nodes = True
+        nodes = mat.node_tree.nodes
+        principled = nodes.get("Principled BSDF")
+        if principled:
+            principled.inputs['Base Color'].default_value = color
+    return mat
+
+# オペレータ C++シーンレイアウト読込
+class MYADDON_OT_import_layout(bpy.types.Operator):
+    bl_idname = "myaddon.myaddon_ot_import_layout"
+    bl_label = "C++シーンレイアウト読込"
+    bl_description = "C++ゲームエンジンが出力したscene_layout.txtから障害物と床を読み込み、配置します"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        path = "C:/Users/k024g/Desktop/GE3&CG3/project/Resources/scene_layout.txt"
+        if not os.path.exists(path):
+            self.report({'WARNING'}, f"シーンレイアウトファイルが見つかりません: {path}\nゲームを一度起動してファイルを生成してください。")
+            return {'CANCELLED'}
+
+        # 既存の Game_ で始まるオブジェクトを削除
+        for obj in list(bpy.context.scene.objects):
+            if obj.name.startswith("Game_"):
+                bpy.data.objects.remove(obj, do_unlink=True)
+
+        # マテリアルを用意
+        building_mat = get_or_create_import_material("Game_Building_Mat", (0.5, 0.6, 0.7, 1.0))
+        floor_mat = get_or_create_import_material("Game_Floor_Mat", (0.2, 0.2, 0.25, 1.0))
+
+        imported_count = 0
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#'):
+                        continue
+                    tokens = line.split(',')
+                    if len(tokens) < 7:
+                        continue
+                    
+                    type_name = tokens[0].strip()
+                    try:
+                        x = float(tokens[1])
+                        y = float(tokens[2])
+                        z = float(tokens[3])
+                        sx = float(tokens[4])
+                        sy = float(tokens[5])
+                        sz = float(tokens[6])
+                    except ValueError:
+                        continue
+
+                    rx, ry, rz = 0.0, 0.0, 0.0
+                    if len(tokens) >= 10:
+                        try:
+                            rx = float(tokens[7])
+                            ry = float(tokens[8])
+                            rz = float(tokens[9])
+                        except ValueError:
+                            pass
+
+                    # 座標変換: C++ (x, y, z) -> Blender (x, z, y)
+                    loc = (x, z, y)
+                    # スケール変換: C++ (sx, sy, sz) -> Blender (sx * 0.5, sz * 0.5, sy * 0.5)
+                    scale = (sx * 0.5, sz * 0.5, sy * 0.5)
+                    # 回転変換
+                    rot = (math.radians(rx), math.radians(rz), math.radians(ry))
+
+                    # 作成前の選択状態をクリア
+                    bpy.ops.object.select_all(action='DESELECT')
+
+                    if type_name == "BUILDING":
+                        bpy.ops.mesh.primitive_cube_add(size=2.0)
+                        obj = context.active_object
+                        obj.name = "Game_Building"
+                        obj.location = loc
+                        obj.scale = scale
+                        obj.rotation_euler = rot
+                        obj.data.materials.append(building_mat)
+                        imported_count += 1
+
+                    elif type_name == "FLOOR":
+                        bpy.ops.mesh.primitive_plane_add(size=2.0)
+                        obj = context.active_object
+                        obj.name = "Game_Floor"
+                        obj.location = loc
+                        obj.scale = scale
+                        obj.rotation_euler = rot
+                        obj.data.materials.append(floor_mat)
+                        imported_count += 1
+                        
+            # 作成後の選択状態をクリア
+            bpy.ops.object.select_all(action='DESELECT')
+            
+        except Exception as e:
+            self.report({'ERROR'}, f"ファイルの読み込みに失敗しました: {e}")
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, f"シーンレイアウトを読み込みました。配置数: {imported_count}")
+        return {'FINISHED'}
+
 #オペレータ シーン出力
 class MYADDON_OT_export_scene(bpy.types.Operator, bpy_extras.io_utils.ExportHelper):
     bl_idname = "myaddon.myaddon_ot_export_scene"
@@ -415,6 +520,9 @@ class TOPBAR_MT_my_menu(bpy.types.Menu):
         self.layout.operator(MYADDON_OT_export_scene.bl_idname,
             text=MYADDON_OT_export_scene.bl_label)
         self.layout.separator()
+        self.layout.operator(MYADDON_OT_import_layout.bl_idname,
+            text=MYADDON_OT_import_layout.bl_label)
+        self.layout.separator()
         self.layout.operator(MYADDON_OT_generate_tunnel.bl_idname,
             text=MYADDON_OT_generate_tunnel.bl_label)
         self.layout.operator(MYADDON_OT_check_collision.bl_idname,
@@ -433,6 +541,7 @@ classes = (
     MYADDON_OT_stretch_vertex,
     MYADDON_OT_create_ico_sphere,
     MYADDON_OT_export_scene,
+    MYADDON_OT_import_layout,
     MYADDON_OT_generate_tunnel,
     MYADDON_OT_check_collision,
     MYADDON_OT_clear_warning,
